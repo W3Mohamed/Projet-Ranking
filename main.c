@@ -209,9 +209,6 @@ int main() {
         print_dense_matrix(G, p.N);
         free(G);
     }
-
-    free(p.links); 
-
     
     // 2. Initialiser X = Nabla, Y = Delta (Partenaire A)
     
@@ -227,7 +224,7 @@ int main() {
 	    iter++;
 	}
 	printf("Convergence atteinte en %d iterations !\n", iter);
-	
+	 free(p.links); 
     // 4. Comparer avec la m�thode des puissances (Ensemble)
     
     return 0;
