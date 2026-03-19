@@ -216,7 +216,17 @@ int main() {
     // 2. Initialiser X = Nabla, Y = Delta (Partenaire A)
     
     // 3. Boucle while (Norme L1 > epsilon) (Partenaire B)
-
+    float epsilon = 0.000001;
+	int iter = 0;
+	while (norme_L1(X, Y, p.N) > epsilon && iter < 1000) {
+	    iteration_nabla_delta(p, X, Y, nabla, delta, 0.85);
+	    
+	    if (iter % 10 == 0) {
+	        printf("Iteration %d : erreur = %f\n", iter, norme_L1(X, Y, p.N));
+	    }
+	    iter++;
+	}
+	printf("Convergence atteinte en %d iterations !\n", iter);
 	
     // 4. Comparer avec la m�thode des puissances (Ensemble)
     
