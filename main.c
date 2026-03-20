@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <math.h>
 #include <stdint.h>
+#include <float.h>
 
 // --- STRUCTURES COMMUNES ---
 typedef struct {
@@ -51,8 +52,10 @@ static void print_dense_matrix(const float *G, int N) {
 
 // --- PARTENAIRE A : GESTION DES DONN�ES ---
 
+
+// � faire : Lire N, m, puis boucler pour lire chaque ligne
 SparseMatrix read_file(const char *filename) {
-     // � faire : Lire N, m, puis boucler pour lire chaque ligne
+     
     // Attention au format : Source | Nb_liens | Dest1 | Poids1 ...
     SparseMatrix P;
     P.N = 0;        // nombre de noeuds
@@ -130,9 +133,13 @@ SparseMatrix read_file(const char *filename) {
     return P;
 }
 
+
+// � faire : Trouver le min de chaque colonne de G
 float* calculer_nabla(SparseMatrix P, float alpha) {
-    // � faire : Trouver le min de chaque colonne de G
+    if (P.N <= 0 || P.links == NULL || P.m <= 0) return NULL;
 }
+
+
 
 float* calculer_delta(SparseMatrix P, float alpha) {
     // � faire : Trouver le max de chaque colonne de G
@@ -166,7 +173,7 @@ int main() {
 
     free(p.links); 
 
-    
+
     // 2. Initialiser X = Nabla, Y = Delta (Partenaire A)
     // 3. Boucle while (Norme L1 > epsilon) (Partenaire B)
     // 4. Comparer avec la m�thode des puissances (Ensemble)
