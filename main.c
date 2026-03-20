@@ -133,25 +133,67 @@ SparseMatrix read_file(const char *filename) {
     return P;
 }
 
-
-// � faire : Trouver le min de chaque colonne de G
-float* calculer_nabla(SparseMatrix P, float alpha) {
-    if (P.N <= 0 || P.links == NULL || P.m <= 0) return NULL;
+float* calculer_nabla(SparseMatrix P) {
+    // � faire : Trouver le min de chaque colonne de G
 }
 
-
-
-float* calculer_delta(SparseMatrix P, float alpha) {
+float* calculer_delta(SparseMatrix P) {
     // � faire : Trouver le max de chaque colonne de G
 }
 
 // --- PARTENAIRE B : ALGORITHME ET CALCUL ---
 float norme_L1(float *V1, float *V2, int N) {
-    // � faire : Somme des abs(V1[i] - V2[i])
+    float somme = 0.0;
+    for (int i = 0; i < N; i++) {
+        somme += fabsf(V1[i] - V2[i]); // Utilise fabsf pour les float
+    }
+    return somme;
 }
 
-void iteration_nabla_delta(SparseMatrix P, float *X, float *Y, float alpha) {
+void multiplier_vecteur_sparse(SparseMatrix P, float *V_in, float *V_out, float alpha) {
+    int N = P.N;
+    float terme_constant = (1.0 - alpha) / N; // Simplification du saut al�atoire
+
+    // Initialiser V_out avec le terme constant
+    for (int i = 0; i < N; i++) V_out[i] = terme_constant;
+
+    // Ajouter la partie alpha * V_in * P
+    for (int k = 0; k < P.m; k++) {
+        V_out[P.links[k].v] += alpha * V_in[P.links[k].u] * P.links[k].val;
+    }
+}
+
+void iteration_nabla_delta(SparseMatrix P, float *X, float *Y, float *nabla, float *delta, float alpha) {
     // � faire : Appliquer les formules (a) et (b) du projet
+    int N = P.N;
+    float *X_next = malloc(N * sizeof(float));
+    float *Y_next = malloc(N * sizeof(float));
+
+    // Calculer ||X||1 et ||Y||1 (la somme des �l�ments)
+    float normeX = 0, normeY = 0;
+    for(int i=0; i<N; i++) {
+        normeX += X[i];
+        normeY += Y[i];
+    }
+
+    // Calculer X*G et Y*G (en utilisant ta fonction de multiplication)
+    float *XG = malloc(N * sizeof(float));
+    float *YG = malloc(N * sizeof(float));
+    multiplier_vecteur_sparse(P, X, XG, alpha);
+    multiplier_vecteur_sparse(P, Y, YG, alpha);
+
+    // Appliquer les formules (a) et (b)
+    for (int i = 0; i < N; i++) {
+        // X(k+1) = max(X(k), X(k)G + nabla(1 - ||X||1))
+        float valX = XG[i] + nabla[i] * (1.0 - normeX);
+        X[i] = (X[i] > valX) ? X[i] : valX;
+
+        // Y(k+1) = min(Y(k), Y(k)G + delta(1 - ||Y||1))
+        float valY = YG[i] + delta[i] * (1.0 - normeY);
+        Y[i] = (Y[i] < valY) ? Y[i] : valY;
+    }
+
+    free(X_next); free(Y_next); free(XG); free(YG);
 }
 
 // --- MAIN (TRAVAIL ENSEMBLE) ---
@@ -170,12 +212,23 @@ int main() {
         print_dense_matrix(G, p.N);
         free(G);
     }
-
-    free(p.links); 
-
-
+    
     // 2. Initialiser X = Nabla, Y = Delta (Partenaire A)
+    
     // 3. Boucle while (Norme L1 > epsilon) (Partenaire B)
+    float epsilon = 0.000001;
+	int iter = 0;
+	while (norme_L1(X, Y, p.N) > epsilon && iter < 1000) {
+	    iteration_nabla_delta(p, X, Y, nabla, delta, 0.85);
+	    
+	    if (iter % 10 == 0) {
+	        printf("Iteration %d : erreur = %f\n", iter, norme_L1(X, Y, p.N));
+	    }
+	    iter++;
+	}
+	printf("Convergence atteinte en %d iterations !\n", iter);
+	 free(p.links); 
     // 4. Comparer avec la m�thode des puissances (Ensemble)
+    
     return 0;
 }
