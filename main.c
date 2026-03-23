@@ -134,11 +134,75 @@ SparseMatrix read_file(const char *filename) {
 }
 
 float* calculer_nabla(SparseMatrix P) {
-    // � faire : Trouver le min de chaque colonne de G
+    // Trouver le minimum de chaque colonne de G
+    
+    // Etape 1: Convertir la matrice creuse en matrice dense
+    float *G = sparse_to_dense_transition_matrix(P);
+    if (G == NULL) return NULL;
+    
+    // Etape 2: Allouer de la memoire pour les resultats (un minimum par colonne)
+    float *nabla = (float *)malloc(P.N * sizeof(float));
+    if (nabla == NULL) {
+        free(G);
+        return NULL;
+    }
+    
+    // Etape 3: Pour chaque colonne j, trouver le minimum
+    for (int j = 0; j < P.N; j++) {
+        // Initialiser avec la premiere valeur de la colonne
+        float min_val = G[0 * P.N + j];
+        
+        // Parcourir tous les elements de la colonne j (lignes 0 a N-1)
+        for (int i = 0; i < P.N; i++) {
+            float val = G[i * P.N + j];  // acces element [i][j]
+            if (val < min_val) {
+                min_val = val;  // trouver plus petit
+            }
+        }
+        
+        // Stocker le minimum dans le resultat
+        nabla[j] = min_val;
+    }
+    
+    // Liberer la memoire de la matrice dense
+    free(G);
+    
+    return nabla;
 }
 
 float* calculer_delta(SparseMatrix P) {
-    // � faire : Trouver le max de chaque colonne de G
+    // Trouver le maximum de chaque colonne de G
+    
+    // Etape 1: Convertir la matrice creuse en matrice dense
+    float *G = sparse_to_dense_transition_matrix(P);
+    if (G == NULL) return NULL;
+
+    // Etape 2: Allouer de la memoire pour les resultats (un maximum par colonne)
+    float *delta = (float *)malloc(P.N * sizeof(float));
+    if (delta == NULL) {
+        free(G);
+        return NULL;
+    }
+    // Etape 3: Pour chaque colonne j, trouver le maximum
+    for (int j = 0; j < P.N; j++) {
+        // Initialiser avec la premiere valeur de la colonne
+        float max_val = G[0 * P.N + j];
+        
+        // Parcourir tous les elements de la colonne j (lignes 0 a N-1)
+        for (int i = 0; i < P.N; i++) {
+            float val = G[i * P.N + j];  // acces element [i][j]
+            if (val > max_val) {
+                max_val = val;  // trouver plus grand
+            }
+        }
+        
+        // Stocker le maximum dans le resultat
+        delta[j] = max_val;
+    }
+    
+    // Liberer la memoire de la matrice dense
+    free(G);
+    return delta;
 }
 
 // --- PARTENAIRE B : ALGORITHME ET CALCUL ---
@@ -200,34 +264,79 @@ void iteration_nabla_delta(SparseMatrix P, float *X, float *Y, float *nabla, flo
 int main() {
     // 1. Charger la matrice (Partenaire A)
     //lire la matrice 
-    SparseMatrix p = read_file("matrix/8.txt");
-    printf("N = %d, m = %d\n", p.N, p.m);
+
+        SparseMatrix p = read_file("matrix/G101.txt");
+        printf("N = %d, m = %d\n", p.N, p.m);
 
     // Matrice de transition complete: valeur si l'arc existe, 0 sinon.
-    float *G = sparse_to_dense_transition_matrix(p);
-    if (G == NULL) {
-        printf("Erreur: impossible de construire la matrice dense (memoire insuffisante ?)\n");
-    } else {
-        printf("\nMatrice de transition dense (%d x %d):\n", p.N, p.N);
-        print_dense_matrix(G, p.N);
-        free(G);
-    }
-    
+
+        float *G = sparse_to_dense_transition_matrix(p);
+        if (G == NULL) {
+            printf("Erreur: impossible de construire la matrice dense (memoire insuffisante ?)\n");
+        } else {
+            printf("\nMatrice de transition dense (%d x %d):\n", p.N, p.N);
+            print_dense_matrix(G, p.N);
+            free(G);
+        }
+        
     // 2. Initialiser X = Nabla, Y = Delta (Partenaire A)
     
+    // Etape 2.1: Calculer nabla (minimum de chaque colonne)
+        float *nabla = calculer_nabla(p);
+        if (nabla == NULL) {
+            printf("Erreur: impossible de calculer nabla\n");
+            free(p.links);
+            return 1;
+        }else {
+            printf("\nNabla (minimum de chaque colonne):\n");
+            for (int i = 0; i < p.N; i++) {
+                printf("%7.3f ", nabla[i]);
+            }
+            printf("\n");
+        }
+        
+    // Etape 2.2: Calculer delta (maximum de chaque colonne)
+        float *delta = calculer_delta(p);
+        if (delta == NULL) {
+            printf("Erreur: impossible de calculer delta\n");
+            free(nabla);
+            free(p.links);
+            return 1;
+        }else {
+            printf("\nDelta (maximum de chaque colonne):\n");
+            for (int i = 0; i < p.N; i++) {
+                printf("%7.3f ", delta[i]);
+            }
+            printf("\n");
+        }
+        
+    // X et Y pointent directement vers nabla et delta
+    // Pas besoin d'allouer et copier !
+       /* float *X = nabla;
+        float *Y = delta;
+        
+        printf("X = nabla, Y = delta initialises\n"); */
+    
     // 3. Boucle while (Norme L1 > epsilon) (Partenaire B)
-    float epsilon = 0.000001;
-	int iter = 0;
-	while (norme_L1(X, Y, p.N) > epsilon && iter < 1000) {
-	    iteration_nabla_delta(p, X, Y, nabla, delta, 0.85);
-	    
-	    if (iter % 10 == 0) {
-	        printf("Iteration %d : erreur = %f\n", iter, norme_L1(X, Y, p.N));
-	    }
-	    iter++;
-	}
-	printf("Convergence atteinte en %d iterations !\n", iter);
-	 free(p.links); 
+        /*float epsilon = 0.000001;
+        int iter = 0;
+        while (norme_L1(X, Y, p.N) > epsilon && iter < 1000) {
+            iteration_nabla_delta(p, X, Y, nabla, delta, 0.85);
+            
+            
+                printf("Iteration %d : erreur = %f\n", iter, norme_L1(X, Y, p.N));
+            
+            iter++;
+        }
+        printf("Convergence atteinte en %d iterations !\n", iter); */
+	
+	// Liberer toute la memoire
+	// X et Y pointent vers nabla et delta, donc pas besoin de free(X) et free(Y)
+        free(nabla);
+        free(delta);
+        free(p.links); 
+
+
     // 4. Comparer avec la m�thode des puissances (Ensemble)
     
     return 0;
