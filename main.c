@@ -15,52 +15,24 @@ typedef struct {
     Edge *links;
 } SparseMatrix;
 
-// Construit une matrice de transition dense (row-major) NxN initialisee a 0.
-// Si un arc (u,v) existe, on met sa valeur; sinon la case reste a 0.
-// Attention: pour N grand, une matrice dense peut etre enorme en memoire.
-static float *sparse_to_dense_transition_matrix(const SparseMatrix P) {
-    if (P.N <= 0) return NULL;
-
-    size_t n = (size_t)P.N;
-    if (n > 0 && n > (SIZE_MAX / n)) return NULL;     // overflow N*N
-    size_t nn = n * n;
-    if (nn > (SIZE_MAX / sizeof(float))) return NULL; // overflow bytes
-
-    float *G = (float *)calloc(nn, sizeof(float));
-    if (G == NULL) return NULL;
-
-    for (int k = 0; k < P.m; k++) {
-        int u = P.links[k].u;
-        int v = P.links[k].v;
-        if (u < 0 || u >= P.N || v < 0 || v >= P.N) continue;
-        G[(size_t)u * (size_t)P.N + (size_t)v] = P.links[k].val;
-    }
-
-    return G;
-}
-
-static void print_dense_matrix(const float *G, int N) {
-    if (G == NULL || N <= 0) return;
-
-    for (int i = 0; i < N; i++) {
-        for (int j = 0; j < N; j++) {
-            printf("%7.3f", G[(size_t)i * (size_t)N + (size_t)j]);
-        }
-        printf("\n");
-    }
-}
 
 // --- PARTENAIRE A : GESTION DES DONN�ES ---
 
 
 // � faire : Lire N, m, puis boucler pour lire chaque ligne
-SparseMatrix read_file(const char *filename) {
-     
-    // Attention au format : Source | Nb_liens | Dest1 | Poids1 ...
+// -------------------------------------------------------------------------
+// Lecture d'une matrice creuse P depuis un fichier texte
+// Format attendu (comme dans tes fichiers matrix/8.txt, G101.txt, ...):
+//   N
+//   m
+//   puis N lignes de la forme :
+//     source  nb_liens  dest1  poids1  dest2  poids2  ...
+// Les sommets sont numerotes de 1 a N dans le fichier.
+SparseMatrix lire_matrice_creuse(const char *filename) {
     SparseMatrix P;
-    P.N = 0;        // nombre de noeuds
-    P.m = 0;        // nombre d'arcs (liens)
-    P.links = NULL; // tableau d'arcs
+    P.N = 0;
+    P.m = 0;
+    P.links = NULL;
 
     FILE *f = fopen(filename, "r");
     if (f == NULL) {
@@ -85,11 +57,11 @@ SparseMatrix read_file(const char *filename) {
         return P;
     }
 
-    int idx = 0; // position actuelle dans P.links[]
+    int idx = 0;
     int parse_error = 0;
+
     for (int ligne = 0; ligne < P.N; ligne++) {
         int source, nb_liens;
-
         if (fscanf(f, "%d %d", &source, &nb_liens) != 2) {
             parse_error = 1;
             break;
@@ -98,22 +70,18 @@ SparseMatrix read_file(const char *filename) {
         for (int j = 0; j < nb_liens; j++) {
             int dest;
             float poids;
-
-            // Si on ne peut pas lire une paire (dest,poids), c'est une erreur de format,
-            // pas un "arc manquant". Les arcs manquants seront a 0 dans la matrice dense.
             if (fscanf(f, "%d %f", &dest, &poids) != 2) {
                 parse_error = 1;
                 break;
             }
 
             if (idx < P.m) {
-                // fichier: sommets numerotes en 1..N ; stockage: 0..N-1
-                int u = source - 1;
+                int u = source - 1; // 0..N-1
                 int v = dest - 1;
                 if (u >= 0 && u < P.N && v >= 0 && v < P.N) {
                     P.links[idx].u = u;
                     P.links[idx].v = v;
-                    P.links[idx].val = poids;
+                    P.links[idx].val = poids; // on suppose deja normalise
                     idx++;
                 }
             }
@@ -121,91 +89,175 @@ SparseMatrix read_file(const char *filename) {
 
         if (parse_error) break;
     }
-
-    // On garde le nombre d'arcs vraiment lus
-    P.m = idx;
+    if (P.m != idx){
+        parse_error = 1; // nombre reel d'arcs lus
+    }
+     
 
     if (parse_error) {
-        printf("Erreur: format invalide (lecture interrompue) dans %s\n", filename);
+        printf("Erreur: format invalide (lecture interrompue)ou bien fichier n'est pas complet dans %s\n", filename);
     }
 
     fclose(f);
     return P;
 }
 
-float* calculer_nabla(SparseMatrix P) {
-    // Trouver le minimum de chaque colonne de G
-    
-    // Etape 1: Convertir la matrice creuse en matrice dense
-    float *G = sparse_to_dense_transition_matrix(P);
+
+
+//condtruir le vecteur F :  f[i] = 1 si le sommet i est pendant (aucun lien sortant)
+//                          f[i] = 0 sinon
+int* construir_vecteur_F(SparseMatrix P) {
+    int *F = (int *)calloc(P.N, sizeof(int));
+    if (F == NULL) return NULL;
+
+    // Initialiser le vecteur F à 1 (tous les sommets sont initialement considérés comme pendants)
+    for (int i = 0; i < P.N; i++) {
+        F[i] = 1;
+    }
+
+    // Parcourir tous les arcs et marquer les sommets qui ont des liens sortants
+    for (int k = 0; k < P.m; k++) {
+        F[P.links[k].u] = 0; // Le sommet source a un lien sortant
+    }
+
+    return F;
+}
+// -------------------------------------------------------------------------
+// Construit une matrice dense G (N x N) a partir de la matrice creuse P.
+// Ici on construit directement la matrice de Google :
+//   G = alpha * P + alpha*(1/N) * f e^T + (1-alpha)*(1/N) * e e^T
+// avec f le vecteur des sommets pendants (donne par construir_vecteur_F).
+// G est stockee en "row-major" : G[i*N + j] represente l'entree G[i,j].
+float* construire_matrice_dense_G(SparseMatrix P, float alpha) {
+    // Verifier que la taille est valide
+    if (P.N <= 0) return NULL;
+
+    int N = P.N;
+
+    // Allouer la matrice dense G (N x N)
+    float *G = (float *)malloc(N * N * sizeof(float));
     if (G == NULL) return NULL;
-    
-    // Etape 2: Allouer de la memoire pour les resultats (un minimum par colonne)
-    float *nabla = (float *)malloc(P.N * sizeof(float));
-    if (nabla == NULL) {
+
+    // Construire le vecteur f (noeuds pendants)
+    int *F = construir_vecteur_F(P);
+    if (F == NULL) {
         free(G);
         return NULL;
     }
-    
-    // Etape 3: Pour chaque colonne j, trouver le minimum
-    for (int j = 0; j < P.N; j++) {
-        // Initialiser avec la premiere valeur de la colonne
-        float min_val = G[0 * P.N + j];
-        
-        // Parcourir tous les elements de la colonne j (lignes 0 a N-1)
-        for (int i = 0; i < P.N; i++) {
-            float val = G[i * P.N + j];  // acces element [i][j]
+
+    // Calculer 1/N une seule fois
+    float un_sur_N = 1.0f / (float)N;
+
+    // Etape 1 : initialiser G avec les termes
+    //   alpha*(1/N) * f e^T  +  (1-alpha)*(1/N) * e e^T
+    // On remplit ligne par ligne.
+    for (int i = 0; i < N; i++) {
+        int est_pendant = (F[i] == 1); // 1 si f[i] = 1, sinon 0
+
+        // Partie provenant du vecteur f sur la ligne i
+        float apport_f = alpha * (float)est_pendant * un_sur_N;
+
+        // Partie teleportation (1-alpha)/N, la meme pour tout le monde
+        float apport_teleport = (1.0f - alpha) * un_sur_N;
+
+        for (int j = 0; j < N; j++) {
+            // Pour chaque colonne j, la valeur de base est :
+            //   alpha*(1/N)*f[i]  +  (1-alpha)*(1/N)
+            G[i * N + j] = apport_f + apport_teleport;
+        }
+    }
+
+    // Etape 2 : ajouter la partie alpha * P
+    // Pour chaque arc (u -> v) avec probabilite P.links[k].val,
+    // on ajoute alpha * P[u,v] a G[u,v].
+    for (int k = 0; k < P.m; k++) {
+        int u = P.links[k].u;
+        int v = P.links[k].v;
+
+        if (u < 0 || u >= N || v < 0 || v >= N) {
+            continue;
+        }
+
+        float p_uv = P.links[k].val; // probabilite de u vers v dans P
+        G[u * N + v] += alpha * p_uv;
+    }
+
+    // On n'a plus besoin de F
+    free(F);
+
+    return G;
+}
+
+
+// Trouver le minimum de chaque colonne de G
+// Calcule nabla[j] = min_i G[i,j] a partir d'une matrice dense G (N x N)
+float* calculer_nabla_depuis_G(const float *G, int N) {
+    if (G == NULL || N <= 0) return NULL;
+
+    float *nabla = (float *)malloc(N * sizeof(float));
+    if (nabla == NULL) return NULL;
+
+    for (int j = 0; j < N; j++) {
+        float min_val = G[0 * N + j];
+        for (int i = 0; i < N; i++) {
+            float val = G[i * N + j];
             if (val < min_val) {
-                min_val = val;  // trouver plus petit
+                min_val = val;
             }
         }
-        
-        // Stocker le minimum dans le resultat
         nabla[j] = min_val;
     }
-    
-    // Liberer la memoire de la matrice dense
-    free(G);
-    
+
     return nabla;
 }
 
-float* calculer_delta(SparseMatrix P) {
-    // Trouver le maximum de chaque colonne de G
-    
-    // Etape 1: Convertir la matrice creuse en matrice dense
-    float *G = sparse_to_dense_transition_matrix(P);
-    if (G == NULL) return NULL;
 
-    // Etape 2: Allouer de la memoire pour les resultats (un maximum par colonne)
-    float *delta = (float *)malloc(P.N * sizeof(float));
-    if (delta == NULL) {
-        free(G);
-        return NULL;
-    }
-    // Etape 3: Pour chaque colonne j, trouver le maximum
-    for (int j = 0; j < P.N; j++) {
-        // Initialiser avec la premiere valeur de la colonne
-        float max_val = G[0 * P.N + j];
-        
-        // Parcourir tous les elements de la colonne j (lignes 0 a N-1)
-        for (int i = 0; i < P.N; i++) {
-            float val = G[i * P.N + j];  // acces element [i][j]
+
+// Calcule delta[j] = max_i G[i,j] a partir d'une matrice dense G (N x N)
+float* calculer_delta_depuis_G(const float *G, int N) {
+    if (G == NULL || N <= 0) return NULL;
+
+    float *delta = (float *)malloc(N * sizeof(float));
+    if (delta == NULL) return NULL;
+
+    for (int j = 0; j < N; j++) {
+        float max_val = G[0 * N + j];
+        for (int i = 0; i < N; i++) {
+            float val = G[i * N + j];
             if (val > max_val) {
-                max_val = val;  // trouver plus grand
+                max_val = val;
             }
         }
-        
-        // Stocker le maximum dans le resultat
         delta[j] = max_val;
     }
-    
-    // Liberer la memoire de la matrice dense
+
+    return delta;
+}
+
+// Fonctions pratiques : a partir de P, construire G puis calculer directement nabla ou delta
+float* calculer_nabla_G(SparseMatrix P, float alpha) {
+    float *G = construire_matrice_dense_G(P, alpha);
+    if (G == NULL) return NULL;
+
+    float *nabla = calculer_nabla_depuis_G(G, P.N);
+    free(G);
+    return nabla;
+}
+
+float* calculer_delta_G(SparseMatrix P, float alpha) {
+    float *G = construire_matrice_dense_G(P, alpha);
+    if (G == NULL) return NULL;
+
+    float *delta = calculer_delta_depuis_G(G, P.N);
     free(G);
     return delta;
 }
 
+
+
 // --- PARTENAIRE B : ALGORITHME ET CALCUL ---
+
+
 float norme_L1(float *V1, float *V2, int N) {
     float somme = 0.0;
     for (int i = 0; i < N; i++) {
@@ -262,27 +314,28 @@ void iteration_nabla_delta(SparseMatrix P, float *X, float *Y, float *nabla, flo
 
 // --- MAIN (TRAVAIL ENSEMBLE) ---
 int main() {
+    float alpha = 0.85f; // Facteur de d�croissance pour PageRank
+
     // 1. Charger la matrice (Partenaire A)
     //lire la matrice 
 
-        SparseMatrix p = read_file("matrix/G101.txt");
+        SparseMatrix p = lire_matrice_creuse("matrix/8.txt");
         printf("N = %d, m = %d\n", p.N, p.m);
 
     // Matrice de transition complete: valeur si l'arc existe, 0 sinon.
 
-        float *G = sparse_to_dense_transition_matrix(p);
+        float *G = construire_matrice_dense_G(p, alpha);
         if (G == NULL) {
             printf("Erreur: impossible de construire la matrice dense (memoire insuffisante ?)\n");
         } else {
             printf("\nMatrice de transition dense (%d x %d):\n", p.N, p.N);
-            print_dense_matrix(G, p.N);
             free(G);
         }
         
     // 2. Initialiser X = Nabla, Y = Delta (Partenaire A)
     
     // Etape 2.1: Calculer nabla (minimum de chaque colonne)
-        float *nabla = calculer_nabla(p);
+        float *nabla = calculer_nabla_G(p, alpha);
         if (nabla == NULL) {
             printf("Erreur: impossible de calculer nabla\n");
             free(p.links);
@@ -296,7 +349,7 @@ int main() {
         }
         
     // Etape 2.2: Calculer delta (maximum de chaque colonne)
-        float *delta = calculer_delta(p);
+        float *delta = calculer_delta_G(p, alpha);
         if (delta == NULL) {
             printf("Erreur: impossible de calculer delta\n");
             free(nabla);
